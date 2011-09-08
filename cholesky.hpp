@@ -1,22 +1,3 @@
-/*
- *	Copyright (c) 2009 Bokyung Choi <bkchoi@stanford.edu>
- *
- *	This file is part of LearnNet.
- *
- *	LearnNet is free software: you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License as published by
- *	the Free Software Foundation, either version 3 of the License, or
- *	(at your option) any later version.
- *
- *	LearnNet is distributed in the hope that it will be useful,
- *	but WITHOUT ANY WARRANTY; without even the implied warranty of
- *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *	GNU General Public License for more details.
- *
- *	You should have received a copy of the GNU General Public License
- *	along with Foobar.  If not, see <http://www.gnu.org/licenses/>
- */
-
 #ifndef CHOLESKY_HPP_
 #define CHOLESKY_HPP_
 
@@ -34,7 +15,7 @@ namespace boost { namespace numeric { namespace ublas {
 
   // Cholesky factorization
   template<class M>
-  void cholesky_factorize (M &m) {
+  bool cholesky_factorize (M &m) {
     typedef M matrix_type;
     typedef typename M::size_type size_type;
     typedef typename M::value_type value_type;
@@ -52,75 +33,119 @@ namespace boost { namespace numeric { namespace ublas {
         value_type elem = m(j,i) - inner_prod(project(mri,range(0,i)), project(mrj,range(0,i)));
 
         if (i == j) {
-        	BOOST_UBLAS_CHECK (elem > 0.0, external_logic("The matrix is not positive definite."));
+          if (elem <= 0.0) {
+            // matrix after rounding errors is not positive definite
+            return false;
+          }
+          else {
             d(i) = sqrt(elem);
+          }
         }
         else {
           m(j,i) = elem / d(i);
         }
       }
     }
+    // put the diagonal back in
     for (size_type i = 0; i < size; ++ i) {
       m(i,i) = d(i);
     }
+    
+    // decomposition succeeded
+    return true;
+  }
+  
+  // Cholesky factorization with submatrix
+  template<class M>
+  bool cholesky_factorize (M &m, unsigned size) {
+    typedef M matrix_type;
+    typedef typename M::size_type size_type;
+    typedef typename M::value_type value_type;
+
+    BOOST_UBLAS_CHECK ((m.size1() >= size) && (m.size2() >= size), external_logic("Cholesky decomposition is only valid for a square, positive definite matrix."));
+
+    vector<value_type> d(size);
+
+    for (size_type i = 0; i < size; i++) {
+      matrix_row<M> mri (row (m, i));
+      for (size_type j = i; j < size; j++) {
+        matrix_row<M> mrj (row (m, j));
+
+        value_type elem = m(j,i) - inner_prod(project(mri,range(0,i)), project(mrj,range(0,i)));
+
+        if (i == j) {
+          if (elem <= 0.0) {
+            // matrix after rounding errors is not positive definite
+            return false;
+          }
+          else {
+            d(i) = sqrt(elem);
+          }
+        }
+        else {
+          m(j,i) = elem / d(i);
+        }
+      }
+    }
+    // put the diagonal back in
+    for (size_type i = 0; i < size; i++) {
+      m(i,i) = d(i);
+    }
+    
+    // decomposition succeeded
+    return true;
   }
   
   // Cholesky update. Insert into the second to the bottom row.
   template<class M>
-  void cholesky_update (M &m, typename M::size_type size, bool atBottom = false) {
+  bool cholesky_update (M &m, typename M::size_type size, vector<typename M::value_type> &nr) {
     typedef typename M::size_type size_type;
-	
-    BOOST_UBLAS_CHECK (m.size1() == m.size2() && m.size1() > size, external_logic("Wrong dimesions."));
 
-    for(size_type i=0 ; i<size ; i++)
-    	m(size, i) = (m(size, i) - inner_prod(project(row(m, i), range(0, i)), project(row(m, size), range(0, i)))) / m(i, i);
-    m(size, size) = m(size, size) - inner_prod(project(row(m, size), range(0, size)), project(row(m, size), range(0, size)));    
-    BOOST_UBLAS_CHECK (m(size, size) > 0.0, external_logic("The matrix is not positive definite."));
-    m(size, size) = sqrt(m(size, size));
+    for(size_type i=0 ; i<size-1 ; i++)
+    	nr(i) = ( nr(i) - inner_prod(project(row(m, i), range(0, i)), project(nr, range(0, i))) ) / m(i, i);
+    
+    // matrix after rounding errors is not positive definite
+    if(nr(size-1) - pow(norm_2( project(nr, range(0, size-1)) ), 2) <= 0.0)
+    	return(false);
+    
+    nr(size-1) = sqrt( nr(size-1) - pow(norm_2( project(nr, range(0, size-1)) ), 2) );
+    nr(size) = ( nr(size) - inner_prod(project(nr, range(0, size-1)), project(row(m, size-1), range(0, size-1))) ) / nr(size-1);
+    nr(size+1) = sqrt( pow(m(size-1, size-1), 2) - pow(nr(size), 2) );
 
-    if(!atBottom)
-    	cholesky_swap(m, size + 1, size - 1);
+    // update succeeded
+    return true;
   }
   
+  // Cholesky update. Insert into the second to the bottom row.
   template<class M>
-  void cholesky_downdate (M &m, typename M::size_type size, typename M::size_type dr) {
-      typedef typename M::size_type size_type;
-      typedef typename M::value_type value_type;
+  bool cholesky_downdate (M &m, typename M::size_type size, M &update_temp, typename M::size_type dr) {
+    typedef typename M::size_type size_type;
+    typedef typename M::value_type value_type;
 
-      BOOST_UBLAS_CHECK (m.size1() == m.size2() && m.size1() >= size && size > dr, external_logic("Dimension error!"));
+    BOOST_UBLAS_CHECK (size > dr, external_logic("Dimension error!"));
 
-      for(size_type i = dr; i < size - 1; i++)
-    	  cholesky_swap(m, size, i);
-  }
-  
-  template<class M>
-  void cholesky_swap (M &m, typename M::size_type size, typename M::size_type sr) {
-      typedef typename M::size_type size_type;
-      typedef typename M::value_type value_type;
-      
-      BOOST_UBLAS_CHECK (m.size1() == m.size2() && m.size1() >= size && size > sr + 1, external_logic("Dimension error!"));
-
-      size_type idx;
-      
-      value_type oldRow1 = m(sr, sr);
-      value_type oldRow2[2] = {m(sr + 1, sr), m(sr + 1, sr + 1)};
-      value_type newRow1 = sqrt(oldRow2[0]*oldRow2[0] + oldRow2[1]*oldRow2[1]);
-      value_type newRow2[2];
-      newRow2[0] = oldRow1 * oldRow2[0] / newRow1;
-      newRow2[1] = sqrt(oldRow1*oldRow1 - newRow2[0]*newRow2[0]);
-      
-      for(idx = sr + 2; idx < size ; idx++){
-    	  value_type newElem = (m(idx, sr)*oldRow2[0] + m(idx, sr + 1)*oldRow2[1]) / newRow1;
-    	  m(idx, sr + 1) = (m(idx, sr)*oldRow1 - newElem*newRow2[0]) / newRow2[1];
-    	  m(idx, sr) = newElem;
-      }
-      
-      for(idx = 0; idx < sr; idx++)
-    	  std::swap(m(sr, idx), m(sr + 1, idx));
-
-      m(sr, sr) = newRow1;
-      m(sr + 1, sr) = newRow2[0];
-      m(sr + 1, sr + 1) = newRow2[1];
+    for(size_type i=dr ; i<size-1 ; i++){
+    	matrix_row<M> mri(m, i+1);
+    	matrix_row<M> nmri(update_temp, i);
+    	for(size_type j=i ; j<size-1 ; j++){
+ 			matrix_row<M> mrj(m, j+1);
+ 			matrix_row<M> nmrj(update_temp, j);
+ 			value_type oldval = inner_prod(project(mri, range(dr, i+2)), project(mrj, range(dr, i+2)));
+    		oldval -= inner_prod(project(nmri, range(dr, i)), project(nmrj, range(dr, i)));
+    		if(i==j){
+    			// matrix after rounding errors is not positive definite
+    			if(oldval <= 0.0)
+ 	   				return(false);
+    			
+    			update_temp(j, i) = sqrt(oldval);
+    		}
+    		else
+    			update_temp(j, i) = oldval / update_temp(i, i);
+    	}
+    }
+    
+    // downdate succeeded
+    return true;
   }
 
 }}} 
